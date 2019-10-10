@@ -392,7 +392,7 @@ def createTable(table_name):
 
 def optimizeTable(table_name):
 	now = datetime.datetime.now()
-	if now.weekday() == 3:
+	if now.weekday() == 2:
 		sql = 'optimize table `' + table_name + '` '
 		logging.info("周三执行优化表，sql：%s：" % sql)
 		db = MySQLdb.connect(mysqlDelHost, mysqlDelUserName, mysqlDelPassword, mysqlDelDbname, charset='utf8' )
