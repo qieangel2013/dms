@@ -398,14 +398,14 @@ def accept():
     while True:
         result = (yield )
         if result != None and result != True :
-        	logging.info("当前执行完该%s的所有数据导入执行完成 "%result[2])
+        	logging.info("当前执行完该%s的所有数据导入执行完成 "%result[0])
         	# deleteData(result[1],result[2])
         	#回收工作
         	#deleteJob(result[2])
         	#优化表
-        	optimizeTable(result[2])
+        	optimizeTable(result[0])
         	#记录当然的任务
-        	recordTask(result[3])
+        	recordTask(result[1])
         	logging.info("执行完当前单个任务，任务数据为：{0}：".format(result))
         #do_some_accepting
 
