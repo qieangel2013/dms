@@ -68,6 +68,12 @@ type_arr = {1:"years",2:"months",3:"weeks",4:"days"}
 taskHistoryRecord = "record.txt"
 #分页查询
 page_size = 50
+#手动执行优化表
+optimizeTableOk = True
+#每页执行完sleep
+pageSleep = False
+#延迟时间以秒为单位
+pageSleepSecond = 5
 #存储id的list
 idList = []
 
@@ -149,7 +155,7 @@ def getWhere(field_other):
 
 def getCount(table_name,where):
 	sql = "select count(*) from " + table_name +" where " + where
-	db = MySQLdb.connect(mysqlDumpHost,mysqlDumpUserName,re.escape(mysqlDumpPassword),mysqlDumpDbname, charset='utf8' )
+	db = MySQLdb.connect(mysqlDumpHost,mysqlDumpUserName,mysqlDumpPassword,mysqlDumpDbname, charset='utf8' )
 	cursor = db.cursor()
 	try:
 		cursor.execute(sql)
@@ -194,12 +200,14 @@ def exportSql(args_of_job):
 			while True:
 				try:
 					sqlTmpStr = sql
+					if pageSleep:
+						time.sleep(pageSleepSecond)
 					logging.info("当前开启了导入后删除，该分页下获取到该%s的总共有%d条数据"%(args_of_job['data']['table_name'],countDel))
 					if countDel <= 0 :
 						return args_of_job['data']['table_name'],args_of_job['data']['sid']
 					sqlTmpStr += ' limit 0,' + str(page_size)
 					countDel = countDel - page_size
-					excuteResult = excutePageMysqldump(args_of_job,sqlTmpStr,now,p+1,count)
+					excuteResult = excutePageMysqldump(args_of_job,sqlTmpStr,now,p+1,count,timeStamp)
 					if  excuteResult == True:
 						logging.info("当前执行完该%s的第 %d 页执行完成 "%(args_of_job['data']['table_name'],p+1))
 						break
@@ -210,7 +218,7 @@ def exportSql(args_of_job):
 					logging.error("发生错误，error:{0}".format(e))
 					sys.exit()
 
-def excutePageMysqldump(args_of_job,sql,now,pages,count):
+def excutePageMysqldump(args_of_job,sql,now,pages,count,timeStamp):
 	global idList,sqlSavePath
 	page = count / page_size
 	page1 = count % page_size
@@ -218,9 +226,9 @@ def excutePageMysqldump(args_of_job,sql,now,pages,count):
 		page = page + 1
 	if not os.path.exists(sqlSavePath) :
 		os.makedirs(sqlSavePath) 
-	saveTmpFile = sqlSavePath + args_of_job['data']['table_name'] + "-" + str(pages) + "-tmp.sql"
-	cmd = mysqlDump + " --replace --compact  --skip-create-options --single-transaction --skip-extended-insert --skip-lock-tables --default-character-set=utf8 -h%s -u%s -P%d -p%s -t %s %s --where=\"%s\"  --triggers=false > %s" % (mysqlDumpHost,mysqlDumpUserName,mysqlDumppPrt,re.escape(mysqlDumpPassword),mysqlDumpDbname,args_of_job['data']['table_name'],sql,saveTmpFile)
-	saveFile = sqlSavePath + args_of_job['data']['table_name'] + "-" + str(pages) + "-" + now.strftime('%Y%m%d') + ".sql"
+	saveTmpFile = sqlSavePath + args_of_job['data']['table_name'] + "-" + str(pages) + "-" + str(timeStamp) + "-tmp.sql"
+	cmd = mysqlDump + " --replace --compact  --skip-create-options --single-transaction --skip-extended-insert --skip-lock-tables --default-character-set=utf8 -h%s -u%s -P%d -p%s -t %s %s --where=\"%s\"  --triggers=false > %s" % (mysqlDelHost, mysqlDelUserName,mysqlDelpPrt,re.escape(mysqlDelPassword),mysqlDelDbname,args_of_job['data']['table_name'],sql,saveTmpFile)
+	saveFile = sqlSavePath + args_of_job['data']['table_name'] + "-" + str(pages) + "-" + str(timeStamp) + "-" + now.strftime('%Y%m%d') + ".sql"
 	logging.info("mysqldump执行命令，cmd为：%s" % (mysqlDump + " --replace --compact  --skip-create-options --single-transaction --skip-extended-insert --skip-lock-tables --default-character-set=utf8 -t %s %s --where=\"%s\"  --triggers=false > %s" % (mysqlDumpDbname,args_of_job['data']['table_name'],sql,saveTmpFile)))
 	# if recordTask(args_of_job['data']['sid']):
 	status,output = commands.getstatusoutput(cmd)
@@ -281,26 +289,46 @@ def importData(saveFile,table_name):
 def deletePageData(sql,table_name,idListStr):
 	global idList
 	if sql !=None and table_name !=None :
+		if len(idList) >11 :
+			sqlprint = str(','.join(idList[0:10]))
+		else :
+			sqlprint = str(idListStr)
+		logging.info("分页删除源数据，sql为：%s,删除id个数为：%d" % ('delete from `' + table_name + '` where ' + sql + " and id in(" + sqlprint +"...)",len(idList)))
 		sql = 'delete from `' + table_name + '` where ' + sql + " and id in(" + str(idListStr) +")"
-		logging.info("分页删除源数据，sql为：%s" % sql)
-		db = MySQLdb.connect(mysqlDelHost, mysqlDelUserName, mysqlDelPassword, mysqlDelDbname, charset='utf8' )
-		cursor = db.cursor()
-		cursor.execute(sql)
-		cursor.close()
-		db.commit()
-		db.close()
+		try:
+			db = MySQLdb.connect(mysqlDelHost, mysqlDelUserName, mysqlDelPassword, mysqlDelDbname, charset='utf8' )
+			cursor = db.cursor()
+			if cursor.execute(sql) >= 0 :
+				logging.info("删除源数据%d个id执行成功!" % len(idList))
+				db.commit()
+			cursor.close()
+			db.close()
+		except Exception as e:
+			logging.error("发生错误，error:{0}".format(e))
+			db.rollback()
+	 		cursor.close()
+			db.close()
+			sys.exit()
 	return True
 
 def deleteData(sql,table_name):
 	if sql !=None and table_name !=None :
 		sql = 'delete from `' + table_name + '` where ' + sql
 		logging.info("删除源数据，sql为：%s" % sql)
-		db = MySQLdb.connect(mysqlDelHost, mysqlDelUserName, mysqlDelPassword, mysqlDelDbname, charset='utf8' )
-		cursor = db.cursor()
-		cursor.execute(sql)
-		cursor.close()
-		db.commit()
-		db.close()
+		try:
+			db = MySQLdb.connect(mysqlDelHost, mysqlDelUserName, mysqlDelPassword, mysqlDelDbname, charset='utf8' )
+			cursor = db.cursor()
+			if cursor.execute(sql) >= 0 :
+				logging.info("删除源数据执行成功!")
+				db.commit()
+			cursor.close()
+			db.close()
+		except Exception as e:
+			logging.error("发生错误，error:{0}".format(e))
+			db.rollback()
+	 		cursor.close()
+			db.close()
+			sys.exit()
 	return True
 
 def addJob(data,and_where_str):
@@ -355,16 +383,21 @@ def createTable(table_name):
 	return True
 
 
-def optimizeTable(table_name):
+def optimizeTable(table_name,is_ok = False):
 	now = datetime.datetime.now()
-	if now.weekday() == 2:
+	if now.weekday() == 2 or is_ok:
 		sql = 'optimize table `' + table_name + '` '
 		logging.info("周三执行优化表，sql：%s" % sql)
-		db = MySQLdb.connect(mysqlDelHost, mysqlDelUserName, mysqlDelPassword, mysqlDelDbname, charset='utf8' )
-		cursor = db.cursor()
-		cursor.execute(sql)
-		cursor.close()
-		db.commit()
+		try:
+			db = MySQLdb.connect(mysqlDelHost, mysqlDelUserName, mysqlDelPassword, mysqlDelDbname, charset='utf8' )
+			cursor = db.cursor()
+			if cursor.execute(sql) >=0 :
+				logging.info("周三执行优化表执行成功!")
+				db.commit()
+		except Exception as e:
+			logging.error("发生错误，error:{0}".format(e))
+			db.rollback()
+	 	cursor.close()
 		db.close()
 	return True
 
@@ -473,10 +506,14 @@ def main():
 		level=logging.INFO
 	)
 	if len(sys.argv) > 3:
-		logging.error("参数错误，最多支持一个参数")
+		logging.error("参数错误，最多支持3个参数")
 		sys.exit()
 	elif len(sys.argv) == 2 and sys.argv[1] !='':
 		getALLJobs(sys.argv[1])
+		logging.info("今天当前的任务完成")
+	elif len(sys.argv) == 3 and sys.argv[1] !='' and sys.argv[2] !='':
+		if optimizeTableOk :
+			optimizeTable(sys.argv[1],True)
 		logging.info("今天当前的任务完成")
 	else :
 		getALLJobs()
